@@ -1,0 +1,223 @@
+!pip install transformers
+#!pip3 install torch torchvision
+!pip install texthero -U
+import texthero as hero
+import pandas as pd
+
+#Read data
+df = pd.read_csv("Penn_State_Posts_test_data.csv")
+
+df = df[0:17200]
+col = ['body_anonymised', 'Category: body_anonymised']
+data = df[col]
+
+data.dropna(inplace=True)
+
+data['Category: body_anonymised'].unique()
+
+data['body_anonymised'] = data['body_anonymised'].astype(str)
+
+import seaborn as sns
+sns.set_style('whitegrid')
+import matplotlib.pyplot as plt
+
+sns.countplot(data['Category: body_anonymised'])
+plt.title('Label Count')
+plt.xticks(rotation = 90)
+data['Category: body_anonymised'].value_counts()
+
+
+data['clean_text'] = hero.clean(data['body_anonymised'])
+
+data['clean_text_length'] = data['clean_text'].apply(lambda x: len(x))
+
+#create list of words
+words_to_remove = ['x', 'n', 'hope', 'would', 'like', 'hi', "n'","'"]
+
+#thank and thanks, treatment and treatments, 
+def remove_words(text):
+    text = text.replace('thanks','thank')
+    text = text.replace('treatments','treatment')
+    text = " ".join([word for word in text.split() if word not in words_to_remove])
+    return text
+    
+data['clean_text'] = data['clean_text'].apply(lambda x: remove_words(x))
+
+# Lemmatizer
+import nltk
+nltk.download('wordnet')
+wn = nltk.WordNetLemmatizer()
+
+def lemmatizer(text):
+    text= [wn.lemmatize(word) for word in text.split()]
+    text = ' '.join(text)
+    return text
+    
+data['clean_lem'] = data['clean_text'].apply(lambda x: lemmatizer(x))    
+    
+import numpy as np
+from sklearn import preprocessing
+
+#Encode target labels with numerical values
+le = preprocessing.LabelEncoder()
+data['Category: body_anonymised'] = data['Category: body_anonymised'].astype(str)
+data['label_int'] = le.fit_transform(data['Category: body_anonymised'])
+
+
+import torch
+from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+from transformers import BertTokenizerFast, BertForSequenceClassification
+from transformers import Trainer, TrainingArguments
+
+# the model to train, base uncased BERT
+#model_name = "google/bert_uncased_L-12_H-768_A-12"
+model_name = "dmis-lab/biobert-v1.1"
+#model_name = "allenai/scibert_scivocab_uncased"
+
+# max sequence length for each input
+max_length = 384
+
+#Load Tokenizer
+#tokenizer = BertTokenizerFast.from_pretrained(model_name, do_lower_case=True, use_fast = True)
+
+#Loading pretrained model and specify number of labels
+#model = BertForSequenceClassification.from_pretrained(model_name, num_labels = 5)
+
+#BioBert
+tokenizer = AutoTokenizer.from_pretrained(model_name, do_lower_case=True, use_fast = True)
+model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels = 5)
+
+#SciBert
+#tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_uncased")
+
+#model = AutoModelForSequenceClassification.from_pretrained("allenai/scibert_scivocab_uncased")
+
+
+# Our data should be a list
+body_text = list(data['body_anonymised'])
+labels = list(data['label_int'])
+
+# split into training & testing set
+from sklearn.model_selection import train_test_split
+X_train, X_test, y_train, y_test = train_test_split(body_text, labels, test_size=0.3)
+
+# Tokenizing X_train and X_test
+#Look up stride(n_stride or docstride) - more context for overflowed text
+X_train_tokenized = tokenizer(X_train,
+                              padding=True,
+                              truncation=True,
+                              max_length=max_length)
+
+X_test_tokenized = tokenizer(X_test,
+                              padding=True,
+                              truncation=True,
+                              max_length=max_length)
+               
+
+
+#Transforming dataset into torch tensors
+#self default class, 
+class CancerDataset(torch.utils.data.Dataset): 
+  def __init__(self, encodings, labels):
+    self.encodings = encodings
+    self.labels = labels
+  
+  def __len__(self):
+    return len(self.encodings['input_ids'])
+
+  def __getitem__(self, idx):
+    item = {key:torch.tensor(val[idx]) for key,val in self.encodings.items()}
+    item['labels'] = torch.tensor(self.labels[idx])
+    return item
+    
+    
+#pass in encodings and pass in training labels
+#converting x train and x test into torch tensors to load into model
+train_dataset = CancerDataset(X_train_tokenized, y_train)
+test_dataset = CancerDataset(X_test_tokenized, y_test)
+
+
+#training arguments
+#56, 64 batch size, epoch between 2-6(most impact), learning rate 1e-4 to 1e-5
+#output directory, evaluation at the end of each epoch, batch size, number of epochs, 
+args = TrainingArguments(
+    output_dir="output",
+    overwrite_output_dir =True,
+    evaluation_strategy="epoch",
+    eval_steps=1,
+    per_device_train_batch_size=16,
+    per_device_eval_batch_size=64,
+    num_train_epochs=3,
+    save_steps=1,
+    save_strategy="epoch",
+    learning_rate=5e-5,
+    seed=0,
+    )
+    
+    
+    #Passing model, arguments, train and test data into trainer
+trainer = Trainer(model=model,
+                  args=args,
+                  train_dataset=train_dataset,
+                  eval_dataset=test_dataset
+                  )
+                  
+                  
+#Train model
+trainer.train()
+
+
+# Model predictions
+y_pred=trainer.predict(test_dataset)
+
+
+from sklearn.metrics import classification_report, confusion_matrix
+
+#softmax probabilties
+#argmax looks for the highest probability and returns index
+y_pred_fix = np.argmax(y_pred[0], axis = 1)
+
+#Print classification report and confusion matrix 
+print(classification_report(y_test,y_pred_fix))
+print(confusion_matrix(y_test,y_pred_fix))
+
+
+#plotting confusion matrix
+%matplotlib inline  
+import itertools
+
+cm = confusion_matrix(y_true=y_test, y_pred=y_pred_fix)
+
+def plot_confusion_matrix(cm, classes, 
+                          normalize=False, 
+                          title='Confusion matrix', 
+                          cmap=plt.cm.Blues):
+
+
+  plt.imshow(cm, interpolation='nearest', cmap=cmap)
+  plt.title(title)
+  plt.colorbar()
+  tick_marks = np.arange(len(classes))
+  plt.xticks(tick_marks, classes, rotation=-90)
+  plt.yticks(tick_marks, classes)
+
+  if normalize:
+    cm = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis]
+    print("Normalized confusion matrix")
+  else:
+    print(cm)
+
+    thresh = cm.max() / 2.
+    for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
+      plt.text(j, i, cm[i, j],
+             horizontalalignment="center",
+             color="white" if cm[i, j] > thresh else "black")
+    
+    plt.tight_layout()
+    plt.ylabel('True label')
+    plt.xlabel('Predicted label', rotation=-90 )
+    plt.figure(figsize= (60,60))
+    
+    
+cm_plot_labels = ['stage 1A', 'stage 1B/2/3A(Resectable)', 'stage 3A/3B(Unresectable)', 'stage 3B/4', 'unknown']
+plot_confusion_matrix(cm=cm, classes=cm_plot_labels, title='Confusion Matrix')
