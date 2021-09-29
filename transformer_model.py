@@ -10,9 +10,9 @@ Original file is located at
 #imports
 #$ git clone https://github.com/dmis-lab/biobert.git
 #$ cd biobert; pip install -r requirements.txt
-!pip install transformers
+pip install transformers
 #!pip3 install torch torchvision
-!pip install texthero -U
+pip install texthero -U
 import texthero as hero
 import pandas as pd
 
