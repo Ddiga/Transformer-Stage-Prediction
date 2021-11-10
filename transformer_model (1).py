@@ -132,7 +132,7 @@ from transformers import Trainer, TrainingArguments
 #model_name = "allenai/scibert_scivocab_uncased"
 
 # max sequence length for each input
-max_length = 384
+max_length = 512
 
 data.head()
 
@@ -212,9 +212,9 @@ args = TrainingArguments(
     overwrite_output_dir =True,
     evaluation_strategy="epoch",
     eval_steps=1,
-    per_device_train_batch_size=16,
-    per_device_eval_batch_size=16,
-    num_train_epochs=3,
+    per_device_train_batch_size=32,
+    per_device_eval_batch_size=32,
+    num_train_epochs=4,
     save_steps=1,
     save_strategy="epoch",
     learning_rate=5e-5,
