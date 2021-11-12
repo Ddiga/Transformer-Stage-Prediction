@@ -148,9 +148,9 @@ data.head()
 #model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels = 5)
 
 #SciBert
-#tokenizer = AutoTokenizer.from_pretrained("allenai/scibert_scivocab_uncased")
+#tokenizer = AutoTokenizer.from_pretrained(model_name, do_lower_case=True, use_fast = True)
 
-#model = BertForSequenceClassification.from_pretrained("allenai/scibert_scivocab_uncased")
+#model = BertForSequenceClassification.from_pretrained(model_name, num_labels = 5)
 
 # Our data should be a list
 body_text = list(data['body_anonymised'])
